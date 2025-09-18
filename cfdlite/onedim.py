@@ -6,6 +6,7 @@ Solvers for one-dimensional computational fluid dynamics.
 
 import numpy as np
 from enum import Enum, unique
+from typing import Optional
 
 
 class PipeModel:
@@ -13,24 +14,29 @@ class PipeModel:
 
     def __init__(
         self,
-        x: np.array = np.nan,
-        area: np.array = np.nan,
-        mdot_w: np.array = np.nan,
-        tau_w: np.array = np.nan,
-        q_w: np.array = np.nan,
-        perimeter: np.array = np.nan,
+        x: Optional[np.ndarray] = None,
+        area: Optional[np.ndarray] = None,
+        mdot_w: Optional[np.ndarray] = None,
+        tau_w: Optional[np.ndarray] = None,
+        q_w: Optional[np.ndarray] = None,
+        perimeter: Optional[np.ndarray] = None,
     ) -> None:
         """Instantiate the class."""
-        self.dA_dx = np.gradient(
-            area, x,
-            edge_order=1,
-        )
-        self.x = x
-        self.area = area
-        self.mdot_w = mdot_w
-        self.tau_w = tau_w
-        self.q_w = q_w
-        self.perimeter = perimeter
+        if x is None or area is None:
+            self.x = np.array([])
+            self.area = np.array([])
+            self.dA_dx = np.array([])
+        else:
+            self.x = x
+            self.area = area
+            self.dA_dx = np.gradient(
+                area, x,
+                edge_order=1,
+            )
+        self.mdot_w = mdot_w if mdot_w is not None else np.array([])
+        self.tau_w = tau_w if tau_w is not None else np.array([])
+        self.q_w = q_w if q_w is not None else np.array([])
+        self.perimeter = perimeter if perimeter is not None else np.array([])
         self.__ff0 = np.vectorize(
             lambda uu0, uu1, uu2, gamma: uu1
         )
@@ -45,7 +51,7 @@ class PipeModel:
             )
         )
         self.__g0 = np.vectorize(
-            lambda uu0, uu1, uu2, mdot_w_x, l: mdot_w_x * l
+            lambda uu0, uu1, uu2, mdot_w_x, length: mdot_w_x * length
         )
         self.__g1 = np.vectorize(
             lambda uu0, uu1, uu2, gamma, area_x, dela_delx, tau_w_x, l: (
@@ -77,8 +83,8 @@ class PipeModel:
 
     def flux(
         self,
-        uu: np.array = np.nan,
-        gamma: np.array = np.nan,
+        uu: np.ndarray = np.nan,
+        gamma: np.ndarray = np.nan,
     ) -> np.array:
         """Get flux vector."""
         return np.array(
@@ -120,21 +126,24 @@ class PipeModel:
             }
         )
 
-
 class FlowSolver:
+    """Finite Volume scheme for non-linear inhomogeneous transport."""
     """Finite Volume scheme for non-linear inhomogeneous transport."""
 
     def __init__(
         self,
-        model: PipeModel = None,
-        initial_solution: np.array = np.nan,
-        intake_boundary: dict = None,
-        outlet_boundary: dict = None,
+        model: Optional[PipeModel] = None,
+        initial_solution: Optional[np.ndarray] = None,
+        intake_boundary: Optional[dict] = None,
+        outlet_boundary: Optional[dict] = None,
     ):
         """Instantiate the class."""
         self.model = model
-        self.uu = initial_solution
-        self.gamma = np.nan
+        self.uu = initial_solution if initial_solution is not None else np.nan
+        self.gamma = (
+            np.full_like(initial_solution[0], np.nan)
+            if initial_solution is not None else np.nan
+        )
         if intake_boundary is None:
             self.intake_boundary = {
                 BoundaryCategory.MF: {BoundaryType.DI: float(0)},
@@ -274,10 +283,10 @@ class FlowSolver:
 
     @staticmethod
     def __predictor(
-        x: np.array = np.nan,
-        flux: np.array = np.nan,
-        source: np.array = np.nan,
-        outlet_flux: np.array = np.nan,
+        x: np.ndarray = np.nan,
+        flux: np.ndarray = np.nan,
+        source: np.ndarray = np.nan,
+        outlet_flux: np.ndarray = np.nan,
     ) -> np.array:
         """Predictor step.
         :type outlet_flux: numpy.ndarray
@@ -294,10 +303,10 @@ class FlowSolver:
 
     @staticmethod
     def __corrector(
-        x: np.array = np.nan,
-        flux: np.array = np.nan,
-        source: np.array = np.nan,
-        intake_flux: np.array = np.nan,
+        x: np.ndarray = np.nan,
+        flux: np.ndarray = np.nan,
+        source: np.ndarray = np.nan,
+        intake_flux: np.ndarray = np.nan,
     ) -> np.array:
         """Corrector step.
         :type intake_flux: numpy.ndarray
@@ -313,14 +322,14 @@ class FlowSolver:
 
     def update(
         self,
-        dt: np.float = 1e-6,
+        dt: float = 1e-6,
     ) -> None:
         """Update the solution for next time step."""
-        # //todo: Update Gamma and Pass on Inlet and Outlet boundaries
+        # TODO: Update Gamma and Pass on Inlet and Outlet boundaries
         uu_predictor = self.uu + dt * (
             self.__predictor(
                 x=self.model.x,
-                flux=self.model.flux(uu=self.uu, gamma=self.gamma),
+                flux=self.model.flux(uu=self.uu, gamma=np.asarray(self.gamma)),
                 source=self.model.source(uu=self.uu, gamma=self.gamma),
                 outlet_flux=self.__get_boundary_flux_for_predictor(
                     uu=self.uu, gamma=self.gamma),
