@@ -44,10 +44,10 @@ $$
 \mathbf{S} = \begin{bmatrix}
 \dot{m}_w P_w \\
 \frac{p}{A} \frac{\partial A}{\partial x} - \tau_w P_w \\
-\dot{q}_w P_w
+\dot{q}_w P_w + \dot{m}_w H_{inj} P_w
 \end{bmatrix}
 $$
-where $P_w$ is the wetted perimeter.
+where $P_w$ is the wetted perimeter, and $H_{inj}$ is the stagnation enthalpy of the injected mass.
 
 ---
 

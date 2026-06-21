@@ -20,6 +20,7 @@ class PipeModel:
         tau_w: Optional[np.ndarray] = None,
         q_w: Optional[np.ndarray] = None,
         perimeter: Optional[np.ndarray] = None,
+        H_inj: Optional[np.ndarray] = None,
     ) -> None:
         """Instantiate the class."""
         if x is None or area is None:
@@ -37,6 +38,7 @@ class PipeModel:
         self.tau_w = tau_w if tau_w is not None else np.array([])
         self.q_w = q_w if q_w is not None else np.array([])
         self.perimeter = perimeter if perimeter is not None else np.array([])
+        self.H_inj = H_inj if H_inj is not None else np.zeros_like(self.x)
         self.__ff0 = np.vectorize(
             lambda uu0, uu1, uu2, gamma: uu1
         )
@@ -59,7 +61,7 @@ class PipeModel:
             ) * uu0 / area_x * (gamma - 1) * dela_delx - tau_w_x * l
         )
         self.__g2 = np.vectorize(
-            lambda uu0, uu1, uu2, q_x, l: q_x * l
+            lambda uu0, uu1, uu2, q_x, mdot_w_x, H_inj_x, l: q_x * l + mdot_w_x * H_inj_x * l
         )
         self.__velocity = np.vectorize(
             lambda uu0, uu1, uu2: uu1 / uu0
@@ -106,7 +108,7 @@ class PipeModel:
                 self.__g0(uu[0], uu[1], uu[2], self.mdot_w, self.perimeter),
                 self.__g1(uu[0], uu[1], uu[2], gamma, self.area, self.dA_dx,
                           self.tau_w, self.perimeter),
-                self.__g2(uu[0], uu[1], uu[2], self.q_w, self.perimeter),
+                self.__g2(uu[0], uu[1], uu[2], self.q_w, self.mdot_w, self.H_inj, self.perimeter),
             ],
         )
 
