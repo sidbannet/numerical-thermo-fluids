@@ -47,35 +47,77 @@ class PipeModel:
         self.mdot_w = mdot_w if mdot_w is not None else np.zeros_like(self.x)
         self.tau_w = tau_w if tau_w is not None else np.zeros_like(self.x)
         self.q_w = q_w if q_w is not None else np.zeros_like(self.x)
-        self.perimeter = perimeter if perimeter is not None else np.zeros_like(self.x)
+        self.perimeter = perimeter if perimeter is not None else np.zeros_like(
+            self.x)
         self.H_inj = H_inj if H_inj is not None else np.zeros_like(self.x)
         self.P0_inj = P0_inj if P0_inj is not None else np.array([])
         self.T0_inj = T0_inj if T0_inj is not None else np.array([])
         self.A_inj = A_inj if A_inj is not None else np.array([])
-        self.theta_inj = theta_inj if theta_inj is not None else (np.full_like(self.x, np.pi / 2.0) if len(self.x) > 0 else np.array([]))
+        self.theta_inj = theta_inj if theta_inj is not None else (
+            np.full_like(
+                self.x,
+                np.pi /
+                2.0) if len(
+                self.x) > 0 else np.array(
+                []))
         self.gamma_inj = gamma_inj if gamma_inj is not None else np.array([])
         self.R_gas = R_gas
         self.g_gravity = g_gravity
-        self.elev_angle = elev_angle if elev_angle is not None else np.zeros_like(self.x)
+        self.elev_angle = elev_angle if elev_angle is not None else np.zeros_like(
+            self.x)
         self.eos = eos if eos is not None else IdealGasEOS(R_gas=self.R_gas)
         self.__ff0 = np.vectorize(
             lambda uu0, uu1, uu2, gamma: uu1
         )
-        self.__ff1 = lambda uu0, uu1, uu2, gamma: (uu1 ** 2) / uu0 + self.__pressure(uu0, uu1, uu2, gamma)
-        self.__ff2 = lambda uu0, uu1, uu2, gamma: uu1 / uu0 * (uu2 + self.__pressure(uu0, uu1, uu2, gamma))
+        self.__ff1 = lambda uu0, uu1, uu2, gamma: (
+            uu1 ** 2) / uu0 + self.__pressure(uu0, uu1, uu2, gamma)
+        self.__ff2 = lambda uu0, uu1, uu2, gamma: uu1 / \
+            uu0 * (uu2 + self.__pressure(uu0, uu1, uu2, gamma))
         self.__g0 = np.vectorize(
             lambda uu0, uu1, uu2, mdot_w_x, length: mdot_w_x * length
         )
         self.__g1 = np.vectorize(
-            lambda uu0, uu1, uu2, p_x, area_x, dela_delx, tau_w_x, l, mdot_w_x, u_inj_x, theta_inj_x, elev_angle_x: (
-                p_x / area_x * dela_delx - tau_w_x * l + mdot_w_x * u_inj_x * np.cos(theta_inj_x) * l - uu0 * self.g_gravity * np.sin(elev_angle_x)
-            )
-        )
+            lambda uu0,
+            uu1,
+            uu2,
+            p_x,
+            area_x,
+            dela_delx,
+            tau_w_x,
+            l,
+            mdot_w_x,
+            u_inj_x,
+            theta_inj_x,
+            elev_angle_x: (
+                p_x /
+                area_x *
+                dela_delx -
+                tau_w_x *
+                l +
+                mdot_w_x *
+                u_inj_x *
+                np.cos(theta_inj_x) *
+                l -
+                uu0 *
+                self.g_gravity *
+                np.sin(elev_angle_x)))
         self.__g2 = np.vectorize(
-            lambda uu0, uu1, uu2, q_x, mdot_w_x, H_inj_x, l, elev_angle_x: (
-                q_x * l + mdot_w_x * H_inj_x * l - uu1 * self.g_gravity * np.sin(elev_angle_x)
-            )
-        )
+            lambda uu0,
+            uu1,
+            uu2,
+            q_x,
+            mdot_w_x,
+            H_inj_x,
+            l,
+            elev_angle_x: (
+                q_x *
+                l +
+                mdot_w_x *
+                H_inj_x *
+                l -
+                uu1 *
+                self.g_gravity *
+                np.sin(elev_angle_x)))
         self.__velocity = np.vectorize(
             lambda uu0, uu1, uu2: uu1 / uu0
         )
@@ -107,7 +149,10 @@ class PipeModel:
             ],
         )
 
-    def _compute_dynamic_injection(self, p: np.ndarray, gamma_main: np.ndarray) -> tuple:
+    def _compute_dynamic_injection(
+            self,
+            p: np.ndarray,
+            gamma_main: np.ndarray) -> tuple:
         """Dynamically compute mdot_w, u_inj, and H_inj using compressible orifice flow."""
         g = self.gamma_inj if len(self.gamma_inj) > 0 else gamma_main
         R = self.R_gas
@@ -115,28 +160,31 @@ class PipeModel:
         T0 = self.T0_inj
         A = self.A_inj
 
-        p_ratio = np.divide(p, P0, out=np.ones_like(p), where=P0>0)
+        p_ratio = np.divide(p, P0, out=np.ones_like(p), where=P0 > 0)
         critical_ratio = (2.0 / (g + 1.0)) ** (g / (g - 1.0))
-        
+
         is_choked = p_ratio <= critical_ratio
-        
-        mach_sq = np.where(
-            is_choked,
-            1.0,
-            np.maximum(0.0, (2.0 / (g - 1.0)) * (p_ratio ** (-(g - 1.0) / g) - 1.0))
-        )
+
+        mach_sq = np.where(is_choked, 1.0, np.maximum(
+            0.0, (2.0 / (g - 1.0)) * (p_ratio ** (-(g - 1.0) / g) - 1.0)))
         mach_inj = np.sqrt(mach_sq)
-        
+
         T_inj = T0 / (1.0 + 0.5 * (g - 1.0) * mach_sq)
-        rho_inj = np.divide(P0, R * T0, out=np.zeros_like(P0), where=T0>0) * (np.divide(T_inj, T0, out=np.zeros_like(T_inj), where=T0>0)) ** (1.0 / (g - 1.0))
-        
+        rho_inj = np.divide(P0,
+                            R * T0,
+                            out=np.zeros_like(P0),
+                            where=T0 > 0) * (np.divide(T_inj,
+                                                       T0,
+                                                       out=np.zeros_like(T_inj),
+                                                       where=T0 > 0)) ** (1.0 / (g - 1.0))
+
         a_inj = np.sqrt(g * R * T_inj)
         u_inj = mach_inj * a_inj
-        
+
         mdot_w = np.where(P0 > p, rho_inj * u_inj * A, 0.0)
         u_inj = np.where(P0 > p, u_inj, 0.0)
         H_inj = (g * R / (g - 1.0)) * T0
-        
+
         return mdot_w, u_inj, H_inj
 
     def source(
@@ -153,14 +201,33 @@ class PipeModel:
             u_inj = np.zeros_like(self.x) if len(self.x) > 0 else np.array([])
             H_inj = self.H_inj
 
-        return np.array(
-            [
-                self.__g0(uu[0], uu[1], uu[2], mdot_w, self.perimeter),
-                self.__g1(uu[0], uu[1], uu[2], p, self.area, self.dA_dx,
-                          self.tau_w, self.perimeter, mdot_w, u_inj, self.theta_inj, self.elev_angle),
-                self.__g2(uu[0], uu[1], uu[2], self.q_w, mdot_w, H_inj, self.perimeter, self.elev_angle),
-            ],
-        )
+        return np.array([self.__g0(uu[0],
+                                   uu[1],
+                                   uu[2],
+                                   mdot_w,
+                                   self.perimeter),
+                         self.__g1(uu[0],
+                                   uu[1],
+                                   uu[2],
+                                   p,
+                                   self.area,
+                                   self.dA_dx,
+                                   self.tau_w,
+                                   self.perimeter,
+                                   mdot_w,
+                                   u_inj,
+                                   self.theta_inj,
+                                   self.elev_angle),
+                         self.__g2(uu[0],
+                                   uu[1],
+                                   uu[2],
+                                   self.q_w,
+                                   mdot_w,
+                                   H_inj,
+                                   self.perimeter,
+                                   self.elev_angle),
+                         ],
+                        )
 
     def thermo(
         self,
@@ -176,6 +243,7 @@ class PipeModel:
                 'internal_energy': self.__internal_energy(uu[0], uu[1], uu[2]),
             }
         )
+
 
 class FlowSolver:
     """Finite Volume scheme for non-linear inhomogeneous transport (MacCormack)."""
@@ -657,17 +725,20 @@ class TVDSolver:
 
         v_roe = (sqrt_rhoL * vL + sqrt_rhoR * vR) / denom
         H_roe = (sqrt_rhoL * HL + sqrt_rhoR * HR) / denom
-        
-        if hasattr(self, 'model') and type(self.model.eos).__name__ != 'IdealGasEOS':
+        rho_roe = sqrt_rhoL * sqrt_rhoR
+
+        if hasattr(
+                self, 'model') and type(
+                self.model.eos).__name__ != 'IdealGasEOS':
             # For general EOS, approximate Roe state internal energy
             eL = uL[2] / uL[0] - 0.5 * (uL[1] / uL[0]) ** 2
             eR = uR[2] / uR[0] - 0.5 * (uR[1] / uR[0]) ** 2
             e_roe = 0.5 * (eL + eR)
-            a_roe = self.model.eos.speed_of_sound(rho_roe, e_roe, gamma=gam_face)
+            a_roe = self.model.eos.speed_of_sound(
+                rho_roe, e_roe, gamma=gam_face)
         else:
-            a_roe = np.sqrt(
-                np.maximum((gam_face - 1.0) * (H_roe - 0.5 * v_roe ** 2), 1e-30)
-            )
+            a_roe = np.sqrt(np.maximum((gam_face - 1.0) *
+                                       (H_roe - 0.5 * v_roe ** 2), 1e-30))
 
         # Eigenvalues
         lam1 = v_roe - a_roe
@@ -678,7 +749,8 @@ class TVDSolver:
         def _fix(lam, lam_ref):
             abs_lam = np.abs(lam)
             delta = eps_entropy * np.abs(lam_ref)
-            return np.where(abs_lam < delta, 0.5 * (abs_lam ** 2 / delta + delta), abs_lam)
+            return np.where(abs_lam < delta, 0.5 *
+                            (abs_lam ** 2 / delta + delta), abs_lam)
 
         abs_lam1 = _fix(lam1, a_roe)
         abs_lam2 = np.abs(lam2)
@@ -700,9 +772,11 @@ class TVDSolver:
         alpha3 = (dp + rho_roe * a_roe * dv) / (2.0 * a2)
 
         # Right eigenvectors (columns of R)
-        r1 = np.array([np.ones_like(v_roe), v_roe - a_roe, H_roe - v_roe * a_roe])
+        r1 = np.array([np.ones_like(v_roe), v_roe -
+                      a_roe, H_roe - v_roe * a_roe])
         r2 = np.array([np.ones_like(v_roe), v_roe, 0.5 * v_roe ** 2])
-        r3 = np.array([np.ones_like(v_roe), v_roe + a_roe, H_roe + v_roe * a_roe])
+        r3 = np.array([np.ones_like(v_roe), v_roe +
+                      a_roe, H_roe + v_roe * a_roe])
 
         # Roe dissipation
         dissipation = (
@@ -775,14 +849,11 @@ class TVDSolver:
         cats = [BoundaryCategory.MF, BoundaryCategory.TP, BoundaryCategory.TH]
         for k, cat in enumerate(cats):
             if BoundaryType.DI in outlet[cat]:
-                F_face[k, -1] = (
-                    list(outlet[cat].values())[0] * scale_out[k] + offset_out[k]
-                )
+                F_face[k, -1] = (list(outlet[cat].values())[0]
+                                 * scale_out[k] + offset_out[k])
             elif BoundaryType.NE in outlet[cat]:
-                F_face[k, -1] = flux[k, -1] + (
-                    list(outlet[cat].values())[0] * (x[-1] - x[-2]) * scale_out[k]
-                    + offset_out[k]
-                )
+                F_face[k, -1] = flux[k, -1] + (list(outlet[cat].values())[0] * (
+                    x[-1] - x[-2]) * scale_out[k] + offset_out[k])
 
         # ---------- intake (left boundary, face index 0) ----------
         intake = self.intake_boundary
