@@ -91,7 +91,7 @@ class PipeModel:
         self,
         uu: np.ndarray = np.nan,
         gamma: np.ndarray = np.nan,
-    ) -> np.array:
+    ) -> np.ndarray:
         """Get flux vector."""
         return np.array(
             [
@@ -141,9 +141,9 @@ class PipeModel:
 
     def source(
         self,
-        uu: np.array = np.nan,
-        gamma: np.array = np.nan,
-    ) -> np.array:
+        uu: np.ndarray = np.nan,
+        gamma: np.ndarray = np.nan,
+    ) -> np.ndarray:
         """Get source vector."""
         p = self.__pressure(uu[0], uu[1], uu[2], gamma)
         if len(self.P0_inj) > 0:
@@ -183,8 +183,8 @@ class PipeModel:
 
     def thermo(
         self,
-        uu: np.array = np.nan,
-        gamma: np.array = np.nan,
+        uu: np.ndarray = np.nan,
+        gamma: np.ndarray = np.nan,
     ) -> dict:
         """Get the thermodynamic properties."""
         return dict(
@@ -287,7 +287,7 @@ class FlowSolver:
         flux: np.ndarray = np.nan,
         source: np.ndarray = np.nan,
         outlet_flux: np.ndarray = np.nan,
-    ) -> np.array:
+    ) -> np.ndarray:
         """Predictor step.
         :type outlet_flux: numpy.ndarray
         """
@@ -307,7 +307,7 @@ class FlowSolver:
         flux: np.ndarray = np.nan,
         source: np.ndarray = np.nan,
         intake_flux: np.ndarray = np.nan,
-    ) -> np.array:
+    ) -> np.ndarray:
         """Corrector step.
         :type intake_flux: numpy.ndarray
         """
