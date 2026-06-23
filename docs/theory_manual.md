@@ -3,11 +3,13 @@
 ## 1. Governing Equations
 The physical model in `cfdlite` represents the quasi-one-dimensional compressible Euler equations with source terms to account for variable area, wall friction, and heat transfer.
 
-The conservative form of the equations can be written as:
+The package solves the standard 1-D, time-dependent Euler equations:
 
-$$ \frac{\partial \mathbf{U}}{\partial t} + \frac{\partial \mathbf{F}}{\partial x} = \mathbf{S} $$
+$$
+\frac{\partial \mathbf{U}}{\partial t} + \frac{\partial \mathbf{F}}{\partial x} = \mathbf{S}
+$$
 
-where the state vector $\mathbf{U}$, flux vector $\mathbf{F}$, and source vector $\mathbf{S}$ are defined as:
+where
 
 $$
 \mathbf{U} = \begin{bmatrix}
@@ -21,33 +23,29 @@ $$
 u(\rho E + p)
 \end{bmatrix}, \quad
 \mathbf{S} = \begin{bmatrix}
-S_{mass} \\
-S_{mom} \\
-S_{energy}
+\dot{m}_w P_w \\
+\frac{p}{A} \frac{\partial A}{\partial x} - \tau_w P_w + \dot{m}_w u_{inj} \cos(\theta_{inj}) P_w - \rho g \sin(\alpha) \\
+\dot{q}_w P_w + \dot{m}_w H_{inj} P_w - \rho u g \sin(\alpha)
 \end{bmatrix}
 $$
 
 Here:
-- $\rho$ is the density.
-- $u$ is the velocity.
-- $E = e + \frac{1}{2}u^2$ is the total specific energy, where $e$ is the specific internal energy.
-- $p$ is the pressure, given by the ideal gas equation of state: $p = (\gamma - 1)\rho e = (\gamma - 1)\left(\rho E - \frac{1}{2}\rho u^2\right)$.
+*   $\rho$: density of the fluid (or mixture)
+*   $u$: velocity
+*   $E = e + u^2/2$: total specific energy
+*   $p$: static pressure
+*   $A$: cross-sectional area
+*   $P_w$: perimeter
+*   $\tau_w$: wall shear stress
+*   $\dot{q}_w$: wall heat flux
+*   $g$: gravitational acceleration
+*   $\alpha$: elevation angle of the pipe (relative to horizontal)
+*   $\dot{m}_w$: injected mass per unit area
+*   $u_{inj}$: injected velocity
+*   $H_{inj}$: injected stagnation enthalpy
+*   $\theta_{inj}$: angle of injection
 
-The source terms in the `PipeModel` class account for:
-- Mass addition/removal: $\dot{m}_w$
-- Variable area $A(x)$: $\frac{p}{A} \frac{\partial A}{\partial x}$
-- Wall friction: $\tau_w$ (wall shear stress)
-- Heat transfer: $\dot{q}_w$
-
-Specifically:
-$$
-\mathbf{S} = \begin{bmatrix}
-\dot{m}_w P_w \\
-\frac{p}{A} \frac{\partial A}{\partial x} - \tau_w P_w + \dot{m}_w u_{inj} \cos(\theta) P_w \\
-\dot{q}_w P_w + \dot{m}_w H_{inj} P_w
-\end{bmatrix}
-$$
-where $P_w$ is the wetted perimeter, $u_{inj}$ is the injection velocity, $\theta$ is the angle of injection relative to the pipe axis, and $H_{inj}$ is the stagnation enthalpy of the injected mass.
+**Note on Gravity:** Gravity acts as a body force on the fluid. The momentum equation includes $- \rho g \sin(\alpha)$ representing the weight of the fluid opposing the flow direction, and the energy equation includes the associated work term $- \rho u g \sin(\alpha)$.
 
 ### 1.1 Dynamic Orifice Flow Injection
 

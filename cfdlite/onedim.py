@@ -7,6 +7,7 @@ Solvers for one-dimensional computational fluid dynamics.
 import numpy as np
 from enum import Enum, unique
 from typing import Optional
+from .eos import AbstractEOS, IdealGasEOS
 
 
 class PipeModel:
@@ -27,6 +28,9 @@ class PipeModel:
         theta_inj: Optional[np.ndarray] = None,
         gamma_inj: Optional[np.ndarray] = None,
         R_gas: float = 287.05,
+        g_gravity: float = 9.81,
+        elev_angle: Optional[np.ndarray] = None,
+        eos: Optional[AbstractEOS] = None,
     ) -> None:
         """Instantiate the class."""
         if x is None or area is None:
@@ -51,29 +55,26 @@ class PipeModel:
         self.theta_inj = theta_inj if theta_inj is not None else (np.full_like(self.x, np.pi / 2.0) if len(self.x) > 0 else np.array([]))
         self.gamma_inj = gamma_inj if gamma_inj is not None else np.array([])
         self.R_gas = R_gas
+        self.g_gravity = g_gravity
+        self.elev_angle = elev_angle if elev_angle is not None else np.zeros_like(self.x)
+        self.eos = eos if eos is not None else IdealGasEOS(R_gas=self.R_gas)
         self.__ff0 = np.vectorize(
             lambda uu0, uu1, uu2, gamma: uu1
         )
-        self.__ff1 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma: (uu1 ** 2) / uu0 + (
-                uu0 * (uu2 / uu0 - 0.5 * (uu1 / uu0) ** 2) * (gamma - 1)
-            )
-        )
-        self.__ff2 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma: uu1 * (
-                gamma * uu2 / uu0 - (gamma - 1) / 2 * (uu1 / uu0) ** 2
-            )
-        )
+        self.__ff1 = lambda uu0, uu1, uu2, gamma: (uu1 ** 2) / uu0 + self.__pressure(uu0, uu1, uu2, gamma)
+        self.__ff2 = lambda uu0, uu1, uu2, gamma: uu1 / uu0 * (uu2 + self.__pressure(uu0, uu1, uu2, gamma))
         self.__g0 = np.vectorize(
             lambda uu0, uu1, uu2, mdot_w_x, length: mdot_w_x * length
         )
         self.__g1 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma, area_x, dela_delx, tau_w_x, l, mdot_w_x, u_inj_x, theta_inj_x: (
-                uu2 / uu0 - 0.5 * (uu1 / uu0) ** 2
-            ) * uu0 / area_x * (gamma - 1) * dela_delx - tau_w_x * l + mdot_w_x * u_inj_x * np.cos(theta_inj_x) * l
+            lambda uu0, uu1, uu2, p_x, area_x, dela_delx, tau_w_x, l, mdot_w_x, u_inj_x, theta_inj_x, elev_angle_x: (
+                p_x / area_x * dela_delx - tau_w_x * l + mdot_w_x * u_inj_x * np.cos(theta_inj_x) * l - uu0 * self.g_gravity * np.sin(elev_angle_x)
+            )
         )
         self.__g2 = np.vectorize(
-            lambda uu0, uu1, uu2, q_x, mdot_w_x, H_inj_x, l: q_x * l + mdot_w_x * H_inj_x * l
+            lambda uu0, uu1, uu2, q_x, mdot_w_x, H_inj_x, l, elev_angle_x: (
+                q_x * l + mdot_w_x * H_inj_x * l - uu1 * self.g_gravity * np.sin(elev_angle_x)
+            )
         )
         self.__velocity = np.vectorize(
             lambda uu0, uu1, uu2: uu1 / uu0
@@ -86,13 +87,10 @@ class PipeModel:
                 0.5 * (uu1 / uu0) ** 2
             )
         )
-        self.__pressure = np.vectorize(
-            lambda uu0, uu1, uu2, gamma: (
-                self.__internal_energy(
-                    uu0, uu1, uu2)
-            ) * (
-                self.__density(uu0, uu1, uu2)
-            ) * (gamma - 1)
+        self.__pressure = lambda uu0, uu1, uu2, gamma: self.eos.pressure(
+            rho=self.__density(uu0, uu1, uu2),
+            e=self.__internal_energy(uu0, uu1, uu2),
+            gamma=gamma
         )
 
     def flux(
@@ -147,8 +145,8 @@ class PipeModel:
         gamma: np.array = np.nan,
     ) -> np.array:
         """Get source vector."""
+        p = self.__pressure(uu[0], uu[1], uu[2], gamma)
         if len(self.P0_inj) > 0:
-            p = self.__pressure(uu[0], uu[1], uu[2], gamma)
             mdot_w, u_inj, H_inj = self._compute_dynamic_injection(p, gamma)
         else:
             mdot_w = self.mdot_w
@@ -158,9 +156,9 @@ class PipeModel:
         return np.array(
             [
                 self.__g0(uu[0], uu[1], uu[2], mdot_w, self.perimeter),
-                self.__g1(uu[0], uu[1], uu[2], gamma, self.area, self.dA_dx,
-                          self.tau_w, self.perimeter, mdot_w, u_inj, self.theta_inj),
-                self.__g2(uu[0], uu[1], uu[2], self.q_w, mdot_w, H_inj, self.perimeter),
+                self.__g1(uu[0], uu[1], uu[2], p, self.area, self.dA_dx,
+                          self.tau_w, self.perimeter, mdot_w, u_inj, self.theta_inj, self.elev_angle),
+                self.__g2(uu[0], uu[1], uu[2], self.q_w, mdot_w, H_inj, self.perimeter, self.elev_angle),
             ],
         )
 
@@ -599,8 +597,8 @@ class TVDSolver:
     # Roe interface flux (with Harten entropy fix)
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _roe_flux(
+        self,
         uL: np.ndarray,
         uR: np.ndarray,
         gamma: np.ndarray,
@@ -627,7 +625,10 @@ class TVDSolver:
             rho = u[0]
             v = u[1] / u[0]
             e = u[2] / u[0] - 0.5 * v ** 2
-            p = rho * e * (gam - 1.0)
+            if hasattr(self, 'model') and self.model.eos is not None:
+                p = self.model.eos.pressure(rho, e, gamma=gam)
+            else:
+                p = rho * e * (gam - 1.0)
             H = (u[2] + p) / rho
             return rho, v, p, H
 
@@ -656,9 +657,17 @@ class TVDSolver:
 
         v_roe = (sqrt_rhoL * vL + sqrt_rhoR * vR) / denom
         H_roe = (sqrt_rhoL * HL + sqrt_rhoR * HR) / denom
-        a_roe = np.sqrt(
-            np.maximum((gam_face - 1.0) * (H_roe - 0.5 * v_roe ** 2), 1e-30)
-        )
+        
+        if hasattr(self, 'model') and type(self.model.eos).__name__ != 'IdealGasEOS':
+            # For general EOS, approximate Roe state internal energy
+            eL = uL[2] / uL[0] - 0.5 * (uL[1] / uL[0]) ** 2
+            eR = uR[2] / uR[0] - 0.5 * (uR[1] / uR[0]) ** 2
+            e_roe = 0.5 * (eL + eR)
+            a_roe = self.model.eos.speed_of_sound(rho_roe, e_roe, gamma=gam_face)
+        else:
+            a_roe = np.sqrt(
+                np.maximum((gam_face - 1.0) * (H_roe - 0.5 * v_roe ** 2), 1e-30)
+            )
 
         # Eigenvalues
         lam1 = v_roe - a_roe
