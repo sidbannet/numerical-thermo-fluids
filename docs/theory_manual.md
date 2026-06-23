@@ -3,11 +3,13 @@
 ## 1. Governing Equations
 The physical model in `cfdlite` represents the quasi-one-dimensional compressible Euler equations with source terms to account for variable area, wall friction, and heat transfer.
 
-The conservative form of the equations can be written as:
+The package solves the standard 1-D, time-dependent Euler equations:
 
-$$ \frac{\partial \mathbf{U}}{\partial t} + \frac{\partial \mathbf{F}}{\partial x} = \mathbf{S} $$
+$$
+\frac{\partial \mathbf{U}}{\partial t} + \frac{\partial \mathbf{F}}{\partial x} = \mathbf{S}
+$$
 
-where the state vector $\mathbf{U}$, flux vector $\mathbf{F}$, and source vector $\mathbf{S}$ are defined as:
+where
 
 $$
 \mathbf{U} = \begin{bmatrix}
@@ -21,33 +23,50 @@ $$
 u(\rho E + p)
 \end{bmatrix}, \quad
 \mathbf{S} = \begin{bmatrix}
-S_{mass} \\
-S_{mom} \\
-S_{energy}
+\dot{m}_w P_w \\
+\frac{p}{A} \frac{\partial A}{\partial x} - \tau_w P_w + \dot{m}_w u_{inj} \cos(\theta_{inj}) P_w - \rho g \sin(\alpha) \\
+\dot{q}_w P_w + \dot{m}_w H_{inj} P_w - \rho u g \sin(\alpha)
 \end{bmatrix}
 $$
 
 Here:
-- $\rho$ is the density.
-- $u$ is the velocity.
-- $E = e + \frac{1}{2}u^2$ is the total specific energy, where $e$ is the specific internal energy.
-- $p$ is the pressure, given by the ideal gas equation of state: $p = (\gamma - 1)\rho e = (\gamma - 1)\left(\rho E - \frac{1}{2}\rho u^2\right)$.
+*   $\rho$: density of the fluid (or mixture)
+*   $u$: velocity
+*   $E = e + u^2/2$: total specific energy
+*   $p$: static pressure
+*   $A$: cross-sectional area
+*   $P_w$: perimeter
+*   $\tau_w$: wall shear stress
+*   $\dot{q}_w$: wall heat flux
+*   $g$: gravitational acceleration
+*   $\alpha$: elevation angle of the pipe (relative to horizontal)
+*   $\dot{m}_w$: injected mass per unit area
+*   $u_{inj}$: injected velocity
+*   $H_{inj}$: injected stagnation enthalpy
+*   $\theta_{inj}$: angle of injection
 
-The source terms in the `PipeModel` class account for:
-- Mass addition/removal: $\dot{m}_w$
-- Variable area $A(x)$: $\frac{p}{A} \frac{\partial A}{\partial x}$
-- Wall friction: $\tau_w$ (wall shear stress)
-- Heat transfer: $\dot{q}_w$
+**Note on Gravity:** Gravity acts as a body force on the fluid. The momentum equation includes $- \rho g \sin(\alpha)$ representing the weight of the fluid opposing the flow direction, and the energy equation includes the associated work term $- \rho u g \sin(\alpha)$.
 
-Specifically:
-$$
-\mathbf{S} = \begin{bmatrix}
-\dot{m}_w P_w \\
-\frac{p}{A} \frac{\partial A}{\partial x} - \tau_w P_w \\
-\dot{q}_w P_w + \dot{m}_w H_{inj} P_w
-\end{bmatrix}
-$$
-where $P_w$ is the wetted perimeter, and $H_{inj}$ is the stagnation enthalpy of the injected mass.
+### 1.1 Dynamic Orifice Flow Injection
+
+When a plenum (manifold) is used to inject gas into the pipe, the injection mass flow rate $\dot{m}_w$ and velocity $u_{inj}$ can be computed dynamically based on the local static pressure $p$ in the pipe.
+
+Assuming a plenum with stagnation pressure $P_{0,inj}$ and stagnation temperature $T_{0,inj}$, the flow through the orifice of effective area $A_{inj}$ is governed by compressible isentropic relations. The critical pressure ratio is:
+$$ \left(\frac{p}{P_{0,inj}}\right)_{crit} = \left(\frac{2}{\gamma+1}\right)^{\frac{\gamma}{\gamma-1}} $$
+
+If $\frac{p}{P_{0,inj}} \le \left(\frac{p}{P_{0,inj}}\right)_{crit}$, the flow is **choked** (sonic) at the orifice:
+- $M_{inj} = 1$
+
+If $\frac{p}{P_{0,inj}} > \left(\frac{p}{P_{0,inj}}\right)_{crit}$, the flow is **unchoked** (subsonic):
+- $M_{inj} = \sqrt{ \frac{2}{\gamma-1} \left[ \left(\frac{P_{0,inj}}{p}\right)^{\frac{\gamma-1}{\gamma}} - 1 \right] }$
+
+The static temperature and velocity at the injection plane are then computed as:
+$$ T_{inj} = \frac{T_{0,inj}}{1 + \frac{\gamma-1}{2} M_{inj}^2} $$
+$$ u_{inj} = M_{inj} \sqrt{\gamma R T_{inj}} $$
+$$ \rho_{inj} = \frac{P_{0,inj}}{R T_{0,inj}} \left(\frac{T_{inj}}{T_{0,inj}}\right)^{\frac{1}{\gamma-1}} $$
+$$ \dot{m}_w = \rho_{inj} u_{inj} A_{inj} $$
+
+Where $\gamma$ is the ratio of specific heats of the injected gas (which defaults to the main pipe gas if not specified).
 
 ---
 

@@ -7,6 +7,7 @@ Solvers for one-dimensional computational fluid dynamics.
 import numpy as np
 from enum import Enum, unique
 from typing import Optional
+from .eos import AbstractEOS, IdealGasEOS
 
 
 class PipeModel:
@@ -21,6 +22,15 @@ class PipeModel:
         q_w: Optional[np.ndarray] = None,
         perimeter: Optional[np.ndarray] = None,
         H_inj: Optional[np.ndarray] = None,
+        P0_inj: Optional[np.ndarray] = None,
+        T0_inj: Optional[np.ndarray] = None,
+        A_inj: Optional[np.ndarray] = None,
+        theta_inj: Optional[np.ndarray] = None,
+        gamma_inj: Optional[np.ndarray] = None,
+        R_gas: float = 287.05,
+        g_gravity: float = 9.81,
+        elev_angle: Optional[np.ndarray] = None,
+        eos: Optional[AbstractEOS] = None,
     ) -> None:
         """Instantiate the class."""
         if x is None or area is None:
@@ -34,60 +44,54 @@ class PipeModel:
                 area, x,
                 edge_order=1,
             )
-        self.mdot_w = mdot_w if mdot_w is not None else np.array([])
-        self.tau_w = tau_w if tau_w is not None else np.array([])
-        self.q_w = q_w if q_w is not None else np.array([])
-        self.perimeter = perimeter if perimeter is not None else np.array([])
+        self.mdot_w = mdot_w if mdot_w is not None else np.zeros_like(self.x)
+        self.tau_w = tau_w if tau_w is not None else np.zeros_like(self.x)
+        self.q_w = q_w if q_w is not None else np.zeros_like(self.x)
+        self.perimeter = perimeter if perimeter is not None else np.zeros_like(
+            self.x)
         self.H_inj = H_inj if H_inj is not None else np.zeros_like(self.x)
-        self.__ff0 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma: uu1
+        self.P0_inj = P0_inj if P0_inj is not None else np.array([])
+        self.T0_inj = T0_inj if T0_inj is not None else np.array([])
+        self.A_inj = A_inj if A_inj is not None else np.array([])
+        self.theta_inj = theta_inj if theta_inj is not None else (
+            np.full_like(
+                self.x,
+                np.pi /
+                2.0) if len(
+                self.x) > 0 else np.array(
+                []))
+        self.gamma_inj = gamma_inj if gamma_inj is not None else np.array([])
+        self.R_gas = R_gas
+        self.g_gravity = g_gravity
+        self.elev_angle = elev_angle if elev_angle is not None else np.zeros_like(
+            self.x)
+        self.eos = eos if eos is not None else IdealGasEOS(R_gas=self.R_gas)
+        self.__ff0 = lambda uu0, uu1, uu2, gamma: uu1
+        self.__ff1 = lambda uu0, uu1, uu2, gamma: (
+            uu1 ** 2) / uu0 + self.__pressure(uu0, uu1, uu2, gamma)
+        self.__ff2 = lambda uu0, uu1, uu2, gamma: uu1 / \
+            uu0 * (uu2 + self.__pressure(uu0, uu1, uu2, gamma))
+        self.__g0 = lambda uu0, uu1, uu2, mdot_w_x, length: mdot_w_x * length
+        self.__g1 = lambda uu0, uu1, uu2, p_x, area_x, dela_delx, tau_w_x, l, mdot_w_x, u_inj_x, theta_inj_x, elev_angle_x: (
+            p_x / area_x * dela_delx - tau_w_x * l + mdot_w_x * u_inj_x * np.cos(theta_inj_x) * l - uu0 * self.g_gravity * np.sin(elev_angle_x)
         )
-        self.__ff1 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma: (uu1 ** 2) / uu0 + (
-                uu0 * (uu2 / uu0 - 0.5 * (uu1 / uu0) ** 2) * (gamma - 1)
-            )
+        self.__g2 = lambda uu0, uu1, uu2, q_x, mdot_w_x, H_inj_x, l, elev_angle_x: (
+            q_x * l + mdot_w_x * H_inj_x * l - uu1 * self.g_gravity * np.sin(elev_angle_x)
         )
-        self.__ff2 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma: uu1 * (
-                gamma * uu2 / uu0 - (gamma - 1) / 2 * (uu1 / uu0) ** 2
-            )
-        )
-        self.__g0 = np.vectorize(
-            lambda uu0, uu1, uu2, mdot_w_x, length: mdot_w_x * length
-        )
-        self.__g1 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma, area_x, dela_delx, tau_w_x, l: (
-                uu2 / uu0 - 0.5 * (uu1 / uu0) ** 2
-            ) * uu0 / area_x * (gamma - 1) * dela_delx - tau_w_x * l
-        )
-        self.__g2 = np.vectorize(
-            lambda uu0, uu1, uu2, q_x, mdot_w_x, H_inj_x, l: q_x * l + mdot_w_x * H_inj_x * l
-        )
-        self.__velocity = np.vectorize(
-            lambda uu0, uu1, uu2: uu1 / uu0
-        )
-        self.__density = np.vectorize(
-            lambda uu0, uu1, uu2, area_x: uu0 / area_x
-        )
-        self.__internal_energy = np.vectorize(
-            lambda uu0, uu1, uu2: (uu2 / uu0) - (
-                0.5 * (uu1 / uu0) ** 2
-            )
-        )
-        self.__pressure = np.vectorize(
-            lambda uu0, uu1, uu2, area_x, gamma: (
-                self.__internal_energy(
-                    uu0, uu1, uu2)
-            ) * (
-                self.__density(uu0, uu1, uu2, area_x)
-            ) * (gamma - 1)
+        self.__velocity = lambda uu0, uu1, uu2: uu1 / uu0
+        self.__density = lambda uu0, uu1, uu2: uu0
+        self.__internal_energy = lambda uu0, uu1, uu2: (uu2 / uu0) - 0.5 * (uu1 / uu0) ** 2
+        self.__pressure = lambda uu0, uu1, uu2, gamma: self.eos.pressure(
+            rho=self.__density(uu0, uu1, uu2),
+            e=self.__internal_energy(uu0, uu1, uu2),
+            gamma=gamma
         )
 
     def flux(
         self,
         uu: np.ndarray = np.nan,
         gamma: np.ndarray = np.nan,
-    ) -> np.array:
+    ) -> np.ndarray:
         """Get flux vector."""
         return np.array(
             [
@@ -97,36 +101,101 @@ class PipeModel:
             ],
         )
 
+    def _compute_dynamic_injection(
+            self,
+            p: np.ndarray,
+            gamma_main: np.ndarray) -> tuple:
+        """Dynamically compute mdot_w, u_inj, and H_inj using compressible orifice flow."""
+        g = self.gamma_inj if len(self.gamma_inj) > 0 else gamma_main
+        R = self.R_gas
+        P0 = self.P0_inj
+        T0 = self.T0_inj
+        A = self.A_inj
+
+        p_ratio = np.divide(p, P0, out=np.ones_like(p), where=P0 > 0)
+        critical_ratio = (2.0 / (g + 1.0)) ** (g / (g - 1.0))
+
+        is_choked = p_ratio <= critical_ratio
+
+        mach_sq = np.where(is_choked, 1.0, np.maximum(
+            0.0, (2.0 / (g - 1.0)) * (p_ratio ** (-(g - 1.0) / g) - 1.0)))
+        mach_inj = np.sqrt(mach_sq)
+
+        T_inj = T0 / (1.0 + 0.5 * (g - 1.0) * mach_sq)
+        rho_inj = np.divide(P0,
+                            R * T0,
+                            out=np.zeros_like(P0),
+                            where=T0 > 0) * (np.divide(T_inj,
+                                                       T0,
+                                                       out=np.zeros_like(T_inj),
+                                                       where=T0 > 0)) ** (1.0 / (g - 1.0))
+
+        a_inj = np.sqrt(g * R * T_inj)
+        u_inj = mach_inj * a_inj
+
+        mdot_w = np.where(P0 > p, rho_inj * u_inj * A, 0.0)
+        u_inj = np.where(P0 > p, u_inj, 0.0)
+        H_inj = (g * R / (g - 1.0)) * T0
+
+        return mdot_w, u_inj, H_inj
+
     def source(
         self,
-        uu: np.array = np.nan,
-        gamma: np.array = np.nan,
-    ) -> np.array:
+        uu: np.ndarray = np.nan,
+        gamma: np.ndarray = np.nan,
+    ) -> np.ndarray:
         """Get source vector."""
-        return np.array(
-            [
-                self.__g0(uu[0], uu[1], uu[2], self.mdot_w, self.perimeter),
-                self.__g1(uu[0], uu[1], uu[2], gamma, self.area, self.dA_dx,
-                          self.tau_w, self.perimeter),
-                self.__g2(uu[0], uu[1], uu[2], self.q_w, self.mdot_w, self.H_inj, self.perimeter),
-            ],
-        )
+        p = self.__pressure(uu[0], uu[1], uu[2], gamma)
+        if len(self.P0_inj) > 0:
+            mdot_w, u_inj, H_inj = self._compute_dynamic_injection(p, gamma)
+        else:
+            mdot_w = self.mdot_w
+            u_inj = np.zeros_like(self.x) if len(self.x) > 0 else np.array([])
+            H_inj = self.H_inj
+
+        return np.array([self.__g0(uu[0],
+                                   uu[1],
+                                   uu[2],
+                                   mdot_w,
+                                   self.perimeter),
+                         self.__g1(uu[0],
+                                   uu[1],
+                                   uu[2],
+                                   p,
+                                   self.area,
+                                   self.dA_dx,
+                                   self.tau_w,
+                                   self.perimeter,
+                                   mdot_w,
+                                   u_inj,
+                                   self.theta_inj,
+                                   self.elev_angle),
+                         self.__g2(uu[0],
+                                   uu[1],
+                                   uu[2],
+                                   self.q_w,
+                                   mdot_w,
+                                   H_inj,
+                                   self.perimeter,
+                                   self.elev_angle),
+                         ],
+                        )
 
     def thermo(
         self,
-        uu: np.array = np.nan,
-        gamma: np.array = np.nan,
+        uu: np.ndarray = np.nan,
+        gamma: np.ndarray = np.nan,
     ) -> dict:
         """Get the thermodynamic properties."""
         return dict(
             {
                 'velocity': self.__velocity(uu[0], uu[1], uu[2]),
-                'density': self.__density(uu[0], uu[1], uu[2], self.area),
-                'pressure': self.__pressure(uu[0], uu[1], uu[2], self.area,
-                                            gamma),
+                'density': self.__density(uu[0], uu[1], uu[2]),
+                'pressure': self.__pressure(uu[0], uu[1], uu[2], gamma),
                 'internal_energy': self.__internal_energy(uu[0], uu[1], uu[2]),
             }
         )
+
 
 class FlowSolver:
     """Finite Volume scheme for non-linear inhomogeneous transport (MacCormack)."""
@@ -164,123 +233,53 @@ class FlowSolver:
 
     def __get_boundary_flux_for_predictor(
         self,
-        uu: np.array = np.nan,
-        gamma: np.array = np.nan,
-    ) -> np.array:
+        uu: np.ndarray = np.nan,
+        gamma: np.ndarray = np.nan,
+    ) -> np.ndarray:
         """Get boundary flux terms for predictor."""
         x = self.model.x
         flux = self.model.flux(uu=uu, gamma=gamma)
         outlet = self.outlet_boundary
-        mfr_outlet = np.nan
-        total_pressure_outlet = np.nan
-        total_enthalpy_outlet = np.nan
-        scale = [
-            1,
-            self.model.area[-1],
-            uu[1][-1],
-        ]
-        offset = [
-            0,
-            0.5 * (uu[1][-1] ** 2.0) / uu[0][-1],
-            0,
-        ]
-        if outlet[BoundaryCategory.MF].keys().__contains__(BoundaryType.DI):
-            mfr_outlet = np.fromiter(
-                outlet[BoundaryCategory.MF].values(),
-                dtype=float,
-            )[0] * scale[0] + offset[0]
-        elif outlet[BoundaryCategory.MF].keys().__contains__(BoundaryType.NE):
-            mfr_outlet = flux[0][-1] + np.fromiter(
-                outlet[BoundaryCategory.MF].values(),
-                dtype=float,
-            )[0] * (x[-1] - x[-2]) * scale[0] + offset[0]
-        if outlet[BoundaryCategory.TP].keys().__contains__(BoundaryType.DI):
-            total_pressure_outlet = np.fromiter(
-                outlet[BoundaryCategory.TP].values(),
-                dtype=float,
-            )[0] * scale[1] + offset[1]
-        elif outlet[BoundaryCategory.TP].keys().__contains__(BoundaryType.NE):
-            total_pressure_outlet = flux[1][-1] + np.fromiter(
-                outlet[BoundaryCategory.TP].values(),
-                dtype=float,
-            )[0] * (x[-1] - x[-2]) * scale[1] + offset[1]
-        if outlet[BoundaryCategory.TH].keys().__contains__(BoundaryType.DI):
-            total_enthalpy_outlet = np.fromiter(
-                outlet[BoundaryCategory.TH].values(),
-                dtype=float,
-            )[0] * scale[2] + offset[2]
-        elif outlet[BoundaryCategory.TH].keys().__contains__(BoundaryType.NE):
-            total_enthalpy_outlet = flux[2][-1] + np.fromiter(
-                outlet[BoundaryCategory.TH].values(),
-                dtype=float,
-            )[0] * (x[-1] - x[-2]) * scale[2] + offset[2]
-        return np.array(
-            [
-                mfr_outlet,
-                total_pressure_outlet,
-                total_enthalpy_outlet,
-            ]
-        )
+
+        scale = np.array([1.0, self.model.area[-1], uu[1][-1]])
+        offset = np.array([0.0, 0.5 * (uu[1][-1] ** 2.0) / uu[0][-1], 0.0])
+        dx = x[-1] - x[-2]
+
+        cats = [BoundaryCategory.MF, BoundaryCategory.TP, BoundaryCategory.TH]
+        vals = np.array([list(outlet[cat].values())[0] for cat in cats], dtype=float)
+
+        is_di = np.array([BoundaryType.DI in outlet[cat] for cat in cats], dtype=int)
+        is_ne = np.array([BoundaryType.NE in outlet[cat] for cat in cats], dtype=int)
+
+        flux_di = vals * scale + offset
+        flux_ne = flux[:, -1] + vals * dx * scale + offset
+
+        return is_di * flux_di + is_ne * flux_ne
 
     def __get_boundary_flux_for_corrector(
         self,
-        uu: np.array = np.nan,
-        gamma: np.array = np.nan,
-    ) -> np.array:
+        uu: np.ndarray = np.nan,
+        gamma: np.ndarray = np.nan,
+    ) -> np.ndarray:
         """Get boundary flux terms for corrector."""
         x = self.model.x
         flux = self.model.flux(uu=uu, gamma=gamma)
         intake = self.intake_boundary
-        mfr_intake = np.nan
-        total_pressure_intake = np.nan
-        total_enthalpy_intake = np.nan
-        scale = [
-            1,
-            self.model.area[0],
-            uu[1][0],
-        ]
-        offset = [
-            0,
-            0.5 * (uu[1][0] ** 2.0) / uu[0][0],
-            0,
-        ]
-        if intake[BoundaryCategory.MF].keys().__contains__(BoundaryType.DI):
-            mfr_intake = np.fromiter(
-                intake[BoundaryCategory.MF].values(),
-                dtype=float,
-            )[0] * scale[0] + offset[0]
-        elif intake[BoundaryCategory.MF].keys().__contains__(BoundaryType.NE):
-            mfr_intake = flux[0][0] - np.fromiter(
-                intake[BoundaryCategory.MF].values(),
-                dtype=float,
-            )[0] * (x[1] - x[0]) * scale[0] - offset[0]
-        if intake[BoundaryCategory.TP].keys().__contains__(BoundaryType.DI):
-            total_pressure_intake = np.fromiter(
-                intake[BoundaryCategory.TP].values(),
-                dtype=float,
-            )[0] * scale[1] + offset[1]
-        elif intake[BoundaryCategory.TP].keys().__contains__(BoundaryType.NE):
-            total_pressure_intake = flux[1][0] - np.fromiter(
-                intake[BoundaryCategory.TP].values(),
-                dtype=float,
-            )[0] * (x[1] - x[0]) * scale[1] - offset[1]
-        if intake[BoundaryCategory.TH].keys().__contains__(BoundaryType.DI):
-            total_enthalpy_intake = np.fromiter(
-                intake[BoundaryCategory.TH].values(),
-                dtype=float,
-            )[0] * scale[2] + offset[2]
-        elif intake[BoundaryCategory.TH].keys().__contains__(BoundaryType.NE):
-            total_enthalpy_intake = flux[2][0] - np.fromiter(
-                intake[BoundaryCategory.TH].values(),
-                dtype=float,
-            )[0] * (x[1] - x[0]) * scale[2] - offset[2]
-        return np.array(
-            [
-                mfr_intake,
-                total_pressure_intake,
-                total_enthalpy_intake,
-            ]
-        )
+
+        scale = np.array([1.0, self.model.area[0], uu[1][0]])
+        offset = np.array([0.0, 0.5 * (uu[1][0] ** 2.0) / uu[0][0], 0.0])
+        dx = x[1] - x[0]
+
+        cats = [BoundaryCategory.MF, BoundaryCategory.TP, BoundaryCategory.TH]
+        vals = np.array([list(intake[cat].values())[0] for cat in cats], dtype=float)
+
+        is_di = np.array([BoundaryType.DI in intake[cat] for cat in cats], dtype=int)
+        is_ne = np.array([BoundaryType.NE in intake[cat] for cat in cats], dtype=int)
+
+        flux_di = vals * scale + offset
+        flux_ne = flux[:, 0] - vals * dx * scale - offset
+
+        return is_di * flux_di + is_ne * flux_ne
 
     @staticmethod
     def __predictor(
@@ -288,7 +287,7 @@ class FlowSolver:
         flux: np.ndarray = np.nan,
         source: np.ndarray = np.nan,
         outlet_flux: np.ndarray = np.nan,
-    ) -> np.array:
+    ) -> np.ndarray:
         """Predictor step.
         :type outlet_flux: numpy.ndarray
         """
@@ -308,7 +307,7 @@ class FlowSolver:
         flux: np.ndarray = np.nan,
         source: np.ndarray = np.nan,
         intake_flux: np.ndarray = np.nan,
-    ) -> np.array:
+    ) -> np.ndarray:
         """Corrector step.
         :type intake_flux: numpy.ndarray
         """
@@ -548,8 +547,8 @@ class TVDSolver:
     # Roe interface flux (with Harten entropy fix)
     # ------------------------------------------------------------------
 
-    @staticmethod
     def _roe_flux(
+        self,
         uL: np.ndarray,
         uR: np.ndarray,
         gamma: np.ndarray,
@@ -576,7 +575,10 @@ class TVDSolver:
             rho = u[0]
             v = u[1] / u[0]
             e = u[2] / u[0] - 0.5 * v ** 2
-            p = rho * e * (gam - 1.0)
+            if hasattr(self, 'model') and self.model.eos is not None:
+                p = self.model.eos.pressure(rho, e, gamma=gam)
+            else:
+                p = rho * e * (gam - 1.0)
             H = (u[2] + p) / rho
             return rho, v, p, H
 
@@ -605,9 +607,20 @@ class TVDSolver:
 
         v_roe = (sqrt_rhoL * vL + sqrt_rhoR * vR) / denom
         H_roe = (sqrt_rhoL * HL + sqrt_rhoR * HR) / denom
-        a_roe = np.sqrt(
-            np.maximum((gam_face - 1.0) * (H_roe - 0.5 * v_roe ** 2), 1e-30)
-        )
+        rho_roe = sqrt_rhoL * sqrt_rhoR
+
+        if hasattr(
+                self, 'model') and type(
+                self.model.eos).__name__ != 'IdealGasEOS':
+            # For general EOS, approximate Roe state internal energy
+            eL = uL[2] / uL[0] - 0.5 * (uL[1] / uL[0]) ** 2
+            eR = uR[2] / uR[0] - 0.5 * (uR[1] / uR[0]) ** 2
+            e_roe = 0.5 * (eL + eR)
+            a_roe = self.model.eos.speed_of_sound(
+                rho_roe, e_roe, gamma=gam_face)
+        else:
+            a_roe = np.sqrt(np.maximum((gam_face - 1.0) *
+                                       (H_roe - 0.5 * v_roe ** 2), 1e-30))
 
         # Eigenvalues
         lam1 = v_roe - a_roe
@@ -618,7 +631,8 @@ class TVDSolver:
         def _fix(lam, lam_ref):
             abs_lam = np.abs(lam)
             delta = eps_entropy * np.abs(lam_ref)
-            return np.where(abs_lam < delta, 0.5 * (abs_lam ** 2 / delta + delta), abs_lam)
+            return np.where(abs_lam < delta, 0.5 *
+                            (abs_lam ** 2 / delta + delta), abs_lam)
 
         abs_lam1 = _fix(lam1, a_roe)
         abs_lam2 = np.abs(lam2)
@@ -640,9 +654,11 @@ class TVDSolver:
         alpha3 = (dp + rho_roe * a_roe * dv) / (2.0 * a2)
 
         # Right eigenvectors (columns of R)
-        r1 = np.array([np.ones_like(v_roe), v_roe - a_roe, H_roe - v_roe * a_roe])
+        r1 = np.array([np.ones_like(v_roe), v_roe -
+                      a_roe, H_roe - v_roe * a_roe])
         r2 = np.array([np.ones_like(v_roe), v_roe, 0.5 * v_roe ** 2])
-        r3 = np.array([np.ones_like(v_roe), v_roe + a_roe, H_roe + v_roe * a_roe])
+        r3 = np.array([np.ones_like(v_roe), v_roe +
+                      a_roe, H_roe + v_roe * a_roe])
 
         # Roe dissipation
         dissipation = (
@@ -710,34 +726,36 @@ class TVDSolver:
 
         # ---------- outlet (right boundary, face index N) ----------
         outlet = self.outlet_boundary
-        scale_out = [1, self.model.area[-1], uu[1][-1]]
-        offset_out = [0, 0.5 * (uu[1][-1] ** 2.0) / uu[0][-1], 0]
+        scale_out = np.array([1.0, self.model.area[-1], uu[1][-1]])
+        offset_out = np.array([0.0, 0.5 * (uu[1][-1] ** 2.0) / uu[0][-1], 0.0])
+        dx_out = x[-1] - x[-2]
+
         cats = [BoundaryCategory.MF, BoundaryCategory.TP, BoundaryCategory.TH]
-        for k, cat in enumerate(cats):
-            if BoundaryType.DI in outlet[cat]:
-                F_face[k, -1] = (
-                    list(outlet[cat].values())[0] * scale_out[k] + offset_out[k]
-                )
-            elif BoundaryType.NE in outlet[cat]:
-                F_face[k, -1] = flux[k, -1] + (
-                    list(outlet[cat].values())[0] * (x[-1] - x[-2]) * scale_out[k]
-                    + offset_out[k]
-                )
+        vals_out = np.array([list(outlet[cat].values())[0] for cat in cats], dtype=float)
+
+        is_di_out = np.array([BoundaryType.DI in outlet[cat] for cat in cats], dtype=int)
+        is_ne_out = np.array([BoundaryType.NE in outlet[cat] for cat in cats], dtype=int)
+
+        flux_di_out = vals_out * scale_out + offset_out
+        flux_ne_out = flux[:, -1] + vals_out * dx_out * scale_out + offset_out
+
+        F_face[:, -1] = is_di_out * flux_di_out + is_ne_out * flux_ne_out
 
         # ---------- intake (left boundary, face index 0) ----------
         intake = self.intake_boundary
-        scale_in = [1, self.model.area[0], uu[1][0]]
-        offset_in = [0, 0.5 * (uu[1][0] ** 2.0) / uu[0][0], 0]
-        for k, cat in enumerate(cats):
-            if BoundaryType.DI in intake[cat]:
-                F_face[k, 0] = (
-                    list(intake[cat].values())[0] * scale_in[k] + offset_in[k]
-                )
-            elif BoundaryType.NE in intake[cat]:
-                F_face[k, 0] = flux[k, 0] - (
-                    list(intake[cat].values())[0] * (x[1] - x[0]) * scale_in[k]
-                    + offset_in[k]
-                )
+        scale_in = np.array([1.0, self.model.area[0], uu[1][0]])
+        offset_in = np.array([0.0, 0.5 * (uu[1][0] ** 2.0) / uu[0][0], 0.0])
+        dx_in = x[1] - x[0]
+
+        vals_in = np.array([list(intake[cat].values())[0] for cat in cats], dtype=float)
+
+        is_di_in = np.array([BoundaryType.DI in intake[cat] for cat in cats], dtype=int)
+        is_ne_in = np.array([BoundaryType.NE in intake[cat] for cat in cats], dtype=int)
+
+        flux_di_in = vals_in * scale_in + offset_in
+        flux_ne_in = flux[:, 0] - vals_in * dx_in * scale_in - offset_in
+
+        F_face[:, 0] = is_di_in * flux_di_in + is_ne_in * flux_ne_in
 
     # ------------------------------------------------------------------
     # Public time-advancement method
