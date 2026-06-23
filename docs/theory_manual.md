@@ -43,11 +43,32 @@ Specifically:
 $$
 \mathbf{S} = \begin{bmatrix}
 \dot{m}_w P_w \\
-\frac{p}{A} \frac{\partial A}{\partial x} - \tau_w P_w \\
+\frac{p}{A} \frac{\partial A}{\partial x} - \tau_w P_w + \dot{m}_w u_{inj} \cos(\theta) P_w \\
 \dot{q}_w P_w + \dot{m}_w H_{inj} P_w
 \end{bmatrix}
 $$
-where $P_w$ is the wetted perimeter, and $H_{inj}$ is the stagnation enthalpy of the injected mass.
+where $P_w$ is the wetted perimeter, $u_{inj}$ is the injection velocity, $\theta$ is the angle of injection relative to the pipe axis, and $H_{inj}$ is the stagnation enthalpy of the injected mass.
+
+### 1.1 Dynamic Orifice Flow Injection
+
+When a plenum (manifold) is used to inject gas into the pipe, the injection mass flow rate $\dot{m}_w$ and velocity $u_{inj}$ can be computed dynamically based on the local static pressure $p$ in the pipe.
+
+Assuming a plenum with stagnation pressure $P_{0,inj}$ and stagnation temperature $T_{0,inj}$, the flow through the orifice of effective area $A_{inj}$ is governed by compressible isentropic relations. The critical pressure ratio is:
+$$ \left(\frac{p}{P_{0,inj}}\right)_{crit} = \left(\frac{2}{\gamma+1}\right)^{\frac{\gamma}{\gamma-1}} $$
+
+If $\frac{p}{P_{0,inj}} \le \left(\frac{p}{P_{0,inj}}\right)_{crit}$, the flow is **choked** (sonic) at the orifice:
+- $M_{inj} = 1$
+
+If $\frac{p}{P_{0,inj}} > \left(\frac{p}{P_{0,inj}}\right)_{crit}$, the flow is **unchoked** (subsonic):
+- $M_{inj} = \sqrt{ \frac{2}{\gamma-1} \left[ \left(\frac{P_{0,inj}}{p}\right)^{\frac{\gamma-1}{\gamma}} - 1 \right] }$
+
+The static temperature and velocity at the injection plane are then computed as:
+$$ T_{inj} = \frac{T_{0,inj}}{1 + \frac{\gamma-1}{2} M_{inj}^2} $$
+$$ u_{inj} = M_{inj} \sqrt{\gamma R T_{inj}} $$
+$$ \rho_{inj} = \frac{P_{0,inj}}{R T_{0,inj}} \left(\frac{T_{inj}}{T_{0,inj}}\right)^{\frac{1}{\gamma-1}} $$
+$$ \dot{m}_w = \rho_{inj} u_{inj} A_{inj} $$
+
+Where $\gamma$ is the ratio of specific heats of the injected gas (which defaults to the main pipe gas if not specified).
 
 ---
 

@@ -21,6 +21,12 @@ class PipeModel:
         q_w: Optional[np.ndarray] = None,
         perimeter: Optional[np.ndarray] = None,
         H_inj: Optional[np.ndarray] = None,
+        P0_inj: Optional[np.ndarray] = None,
+        T0_inj: Optional[np.ndarray] = None,
+        A_inj: Optional[np.ndarray] = None,
+        theta_inj: Optional[np.ndarray] = None,
+        gamma_inj: Optional[np.ndarray] = None,
+        R_gas: float = 287.05,
     ) -> None:
         """Instantiate the class."""
         if x is None or area is None:
@@ -34,11 +40,17 @@ class PipeModel:
                 area, x,
                 edge_order=1,
             )
-        self.mdot_w = mdot_w if mdot_w is not None else np.array([])
-        self.tau_w = tau_w if tau_w is not None else np.array([])
-        self.q_w = q_w if q_w is not None else np.array([])
-        self.perimeter = perimeter if perimeter is not None else np.array([])
+        self.mdot_w = mdot_w if mdot_w is not None else np.zeros_like(self.x)
+        self.tau_w = tau_w if tau_w is not None else np.zeros_like(self.x)
+        self.q_w = q_w if q_w is not None else np.zeros_like(self.x)
+        self.perimeter = perimeter if perimeter is not None else np.zeros_like(self.x)
         self.H_inj = H_inj if H_inj is not None else np.zeros_like(self.x)
+        self.P0_inj = P0_inj if P0_inj is not None else np.array([])
+        self.T0_inj = T0_inj if T0_inj is not None else np.array([])
+        self.A_inj = A_inj if A_inj is not None else np.array([])
+        self.theta_inj = theta_inj if theta_inj is not None else (np.full_like(self.x, np.pi / 2.0) if len(self.x) > 0 else np.array([]))
+        self.gamma_inj = gamma_inj if gamma_inj is not None else np.array([])
+        self.R_gas = R_gas
         self.__ff0 = np.vectorize(
             lambda uu0, uu1, uu2, gamma: uu1
         )
@@ -56,9 +68,9 @@ class PipeModel:
             lambda uu0, uu1, uu2, mdot_w_x, length: mdot_w_x * length
         )
         self.__g1 = np.vectorize(
-            lambda uu0, uu1, uu2, gamma, area_x, dela_delx, tau_w_x, l: (
+            lambda uu0, uu1, uu2, gamma, area_x, dela_delx, tau_w_x, l, mdot_w_x, u_inj_x, theta_inj_x: (
                 uu2 / uu0 - 0.5 * (uu1 / uu0) ** 2
-            ) * uu0 / area_x * (gamma - 1) * dela_delx - tau_w_x * l
+            ) * uu0 / area_x * (gamma - 1) * dela_delx - tau_w_x * l + mdot_w_x * u_inj_x * np.cos(theta_inj_x) * l
         )
         self.__g2 = np.vectorize(
             lambda uu0, uu1, uu2, q_x, mdot_w_x, H_inj_x, l: q_x * l + mdot_w_x * H_inj_x * l
@@ -67,7 +79,7 @@ class PipeModel:
             lambda uu0, uu1, uu2: uu1 / uu0
         )
         self.__density = np.vectorize(
-            lambda uu0, uu1, uu2, area_x: uu0 / area_x
+            lambda uu0, uu1, uu2: uu0
         )
         self.__internal_energy = np.vectorize(
             lambda uu0, uu1, uu2: (uu2 / uu0) - (
@@ -75,11 +87,11 @@ class PipeModel:
             )
         )
         self.__pressure = np.vectorize(
-            lambda uu0, uu1, uu2, area_x, gamma: (
+            lambda uu0, uu1, uu2, gamma: (
                 self.__internal_energy(
                     uu0, uu1, uu2)
             ) * (
-                self.__density(uu0, uu1, uu2, area_x)
+                self.__density(uu0, uu1, uu2)
             ) * (gamma - 1)
         )
 
@@ -97,18 +109,58 @@ class PipeModel:
             ],
         )
 
+    def _compute_dynamic_injection(self, p: np.ndarray, gamma_main: np.ndarray) -> tuple:
+        """Dynamically compute mdot_w, u_inj, and H_inj using compressible orifice flow."""
+        g = self.gamma_inj if len(self.gamma_inj) > 0 else gamma_main
+        R = self.R_gas
+        P0 = self.P0_inj
+        T0 = self.T0_inj
+        A = self.A_inj
+
+        p_ratio = np.divide(p, P0, out=np.ones_like(p), where=P0>0)
+        critical_ratio = (2.0 / (g + 1.0)) ** (g / (g - 1.0))
+        
+        is_choked = p_ratio <= critical_ratio
+        
+        mach_sq = np.where(
+            is_choked,
+            1.0,
+            np.maximum(0.0, (2.0 / (g - 1.0)) * (p_ratio ** (-(g - 1.0) / g) - 1.0))
+        )
+        mach_inj = np.sqrt(mach_sq)
+        
+        T_inj = T0 / (1.0 + 0.5 * (g - 1.0) * mach_sq)
+        rho_inj = np.divide(P0, R * T0, out=np.zeros_like(P0), where=T0>0) * (np.divide(T_inj, T0, out=np.zeros_like(T_inj), where=T0>0)) ** (1.0 / (g - 1.0))
+        
+        a_inj = np.sqrt(g * R * T_inj)
+        u_inj = mach_inj * a_inj
+        
+        mdot_w = np.where(P0 > p, rho_inj * u_inj * A, 0.0)
+        u_inj = np.where(P0 > p, u_inj, 0.0)
+        H_inj = (g * R / (g - 1.0)) * T0
+        
+        return mdot_w, u_inj, H_inj
+
     def source(
         self,
         uu: np.array = np.nan,
         gamma: np.array = np.nan,
     ) -> np.array:
         """Get source vector."""
+        if len(self.P0_inj) > 0:
+            p = self.__pressure(uu[0], uu[1], uu[2], gamma)
+            mdot_w, u_inj, H_inj = self._compute_dynamic_injection(p, gamma)
+        else:
+            mdot_w = self.mdot_w
+            u_inj = np.zeros_like(self.x) if len(self.x) > 0 else np.array([])
+            H_inj = self.H_inj
+
         return np.array(
             [
-                self.__g0(uu[0], uu[1], uu[2], self.mdot_w, self.perimeter),
+                self.__g0(uu[0], uu[1], uu[2], mdot_w, self.perimeter),
                 self.__g1(uu[0], uu[1], uu[2], gamma, self.area, self.dA_dx,
-                          self.tau_w, self.perimeter),
-                self.__g2(uu[0], uu[1], uu[2], self.q_w, self.mdot_w, self.H_inj, self.perimeter),
+                          self.tau_w, self.perimeter, mdot_w, u_inj, self.theta_inj),
+                self.__g2(uu[0], uu[1], uu[2], self.q_w, mdot_w, H_inj, self.perimeter),
             ],
         )
 
@@ -121,9 +173,8 @@ class PipeModel:
         return dict(
             {
                 'velocity': self.__velocity(uu[0], uu[1], uu[2]),
-                'density': self.__density(uu[0], uu[1], uu[2], self.area),
-                'pressure': self.__pressure(uu[0], uu[1], uu[2], self.area,
-                                            gamma),
+                'density': self.__density(uu[0], uu[1], uu[2]),
+                'pressure': self.__pressure(uu[0], uu[1], uu[2], gamma),
                 'internal_energy': self.__internal_energy(uu[0], uu[1], uu[2]),
             }
         )
