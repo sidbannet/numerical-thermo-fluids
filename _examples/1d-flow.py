@@ -1,5 +1,6 @@
 ## Import packages and modules
 import numpy as np
+# pyrefly: ignore [missing-import]
 import matplotlib.pyplot as plt
 from cfdlite.onedim import PipeModel as Model
 from cfdlite.onedim import FlowSolver as Solver
