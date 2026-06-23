@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+
+# Virtual environments
+venv/
+.env/
+env/
+ENV/
+
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Testing and coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Agent/Brain directories
+.gemini/
+brain/
